@@ -6,17 +6,15 @@ import contextily as ctx
 import tempfile
 import zipfile
 import os
-from shapely.geometry import Polygon, LineString
 import io
+from shapely.geometry import Polygon, LineString
 
-st.set_page_config(layout="wide")
+st.set_page_config(layout="centered")
 
-st.title("📌 Peta Rekomendasi KKPRL")
+st.title("📌 Generator Peta KKPRL")
 
 # === Upload SHP ===
 uploaded_file = st.file_uploader("Upload file SHP (zip)", type=["zip"])
-
-gdf_rekom, gdf_terminal, gdf_area = None, None, None
 
 if uploaded_file is not None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -31,38 +29,34 @@ if uploaded_file is not None:
         if len(shp_files) > 0:
             shp_path = os.path.join(tmpdir, shp_files[0])
             gdf_rekom = gpd.read_file(shp_path).to_crs(3857)
+        else:
+            st.error("❌ File SHP tidak ditemukan dalam ZIP")
+            st.stop()
+else:
+    st.info("⬆️ Silakan upload file SHP (format ZIP)")
+    st.stop()
 
-# === Jika tidak ada file, buat contoh data dummy ===
-if gdf_rekom is None:
-    poly_rekom = Polygon([
-        (108.7865, -3.0765),
-        (108.7935, -3.0765),
-        (108.7935, -3.0735),
-        (108.7865, -3.0735)
-    ])
-    line_terminal = LineString([(108.787, -3.074), (108.791, -3.0755)])
-    poly_area = Polygon([
-        (108.785, -3.072),
-        (108.7865, -3.072),
-        (108.7865, -3.070),
-        (108.785, -3.070)
-    ])
+# Dummy layer tambahan (Terminal & Area lain) – bisa diganti jika ada data asli
+line_terminal = LineString([(108.787, -3.074), (108.791, -3.0755)])
+poly_area = Polygon([
+    (108.785, -3.072),
+    (108.7865, -3.072),
+    (108.7865, -3.070),
+    (108.785, -3.070)
+])
 
-    gdf_rekom = gpd.GeoDataFrame({"label":["Rekomendasi"]}, geometry=[poly_rekom], crs="EPSG:4326").to_crs(3857)
-    gdf_terminal = gpd.GeoDataFrame({"label":["Terminal"]}, geometry=[line_terminal], crs="EPSG:4326").to_crs(3857)
-    gdf_area = gpd.GeoDataFrame({"label":["Area Lain"]}, geometry=[poly_area], crs="EPSG:4326").to_crs(3857)
+gdf_terminal = gpd.GeoDataFrame({"label":["Terminal"]}, geometry=[line_terminal], crs="EPSG:4326").to_crs(3857)
+gdf_area = gpd.GeoDataFrame({"label":["Area Lain"]}, geometry=[poly_area], crs="EPSG:4326").to_crs(3857)
 
-# === Plot Peta ===
-fig = plt.figure(figsize=(11.7, 8.3))  # A4 Landscape dalam inch (297mm x 210mm)
+# === Render Peta Final ===
+fig = plt.figure(figsize=(11.7, 8.3))  # A4 Landscape
 gs = fig.add_gridspec(1, 2, width_ratios=[3,1])
 
 # Peta utama
 ax = fig.add_subplot(gs[0,0])
 gdf_rekom.plot(ax=ax, color="green", alpha=0.4, edgecolor="black", linewidth=1)
-if gdf_terminal is not None:
-    gdf_terminal.plot(ax=ax, color="black", linewidth=2)
-if gdf_area is not None:
-    gdf_area.plot(ax=ax, color="orange", alpha=0.5, edgecolor="black")
+gdf_terminal.plot(ax=ax, color="black", linewidth=2)
+gdf_area.plot(ax=ax, color="orange", alpha=0.5, edgecolor="black")
 
 ctx.add_basemap(ax, source=ctx.providers.Esri.WorldImagery)
 ax.set_axis_off()
@@ -112,11 +106,8 @@ ax_leg.text(0.5,0.62,"2 km", fontsize=6, ha="center")
 
 plt.tight_layout()
 
-# Tampilkan peta
-st.pyplot(fig)
-
-# Simpan ke JPG untuk download
+# === Export ke JPG ===
 buf = io.BytesIO()
 fig.savefig(buf, format="jpg", dpi=300, bbox_inches="tight")
-st.download_button("📥 Download Peta JPG", data=buf.getvalue(),
-                   file_name="peta_rekomendasi.jpg", mime="image/jpeg")
+st.download_button("📥 Download Peta (JPG)", data=buf.getvalue(),
+                   file_name="peta_kkprl.jpg", mime="image/jpeg")
