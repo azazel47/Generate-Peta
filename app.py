@@ -3,111 +3,130 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import contextily as ctx
-import tempfile
-import zipfile
-import os
+import numpy as np
+from PIL import Image
 import io
-from shapely.geometry import Polygon, LineString
 
-st.set_page_config(layout="centered")
+st.set_page_config(page_title="Peta Rekomendasi KKPRL", layout="wide")
+st.title("🗺️ Generator Peta KKPRL (Layout Resmi)")
 
-st.title("📌 Generator Peta KKPRL")
+# === Fungsi: Skala Bar Otomatis ===
+def add_scalebar(ax, length=None, location=(0.1, 0.05), linewidth=3):
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
 
-# === Upload SHP ===
-uploaded_file = st.file_uploader("Upload file SHP (zip)", type=["zip"])
+    if length is None:
+        x_range = xmax - xmin
+        approx_len = x_range / 5
+        pow10 = 10 ** int(np.log10(approx_len))
+        length = int(round(approx_len / pow10) * pow10)
+
+    x0 = xmin + (xmax - xmin) * location[0]
+    y0 = ymin + (ymax - ymin) * location[1]
+
+    ax.plot([x0, x0 + length], [y0, y0],
+            color="black", linewidth=linewidth, transform=ax.transData)
+    ax.text(x0, y0 - (ymax - ymin) * 0.02, "0 m",
+            ha="center", va="top", fontsize=8, transform=ax.transData)
+    ax.text(x0 + length, y0 - (ymax - ymin) * 0.02,
+            f"{length/1000:.1f} km",
+            ha="center", va="top", fontsize=8, transform=ax.transData)
+
+# === Fungsi: Grid Koordinat ===
+def add_grid(ax):
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    xticks = np.linspace(xmin, xmax, 5)
+    yticks = np.linspace(ymin, ymax, 5)
+    ax.set_xticks(xticks)
+    ax.set_yticks(yticks)
+    ax.tick_params(axis="both", which="both", length=0, labelsize=6)
+    ax.grid(True, color="gray", linestyle="--", linewidth=0.5, alpha=0.7)
+
+# Upload file SHP/GeoJSON
+uploaded_file = st.file_uploader("📂 Upload file SHP (ZIP/GeoJSON)", type=["zip", "json", "geojson"])
 
 if uploaded_file is not None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = os.path.join(tmpdir, "data.zip")
-        with open(zip_path, "wb") as f:
-            f.write(uploaded_file.read())
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(tmpdir)
+    try:
+        gdf = gpd.read_file(uploaded_file)
+        if gdf.crs is None:
+            gdf = gdf.set_crs("EPSG:4326")
+        gdf = gdf.to_crs(epsg=3857)
 
-        # Cari file shp
-        shp_files = [f for f in os.listdir(tmpdir) if f.endswith(".shp")]
-        if len(shp_files) > 0:
-            shp_path = os.path.join(tmpdir, shp_files[0])
-            gdf_rekom = gpd.read_file(shp_path).to_crs(3857)
-        else:
-            st.error("❌ File SHP tidak ditemukan dalam ZIP")
-            st.stop()
-else:
-    st.info("⬆️ Silakan upload file SHP (format ZIP)")
-    st.stop()
+        # Layout figure A4 landscape
+        fig = plt.figure(figsize=(11.7, 8.3))
+        ax_main = fig.add_axes([0.05, 0.25, 0.65, 0.65])  
 
-# Dummy layer tambahan (Terminal & Area lain) – bisa diganti jika ada data asli
-line_terminal = LineString([(108.787, -3.074), (108.791, -3.0755)])
-poly_area = Polygon([
-    (108.785, -3.072),
-    (108.7865, -3.072),
-    (108.7865, -3.070),
-    (108.785, -3.070)
-])
+        gdf.plot(ax=ax_main, alpha=0.6, edgecolor="black", cmap="Set2")
+        ctx.add_basemap(ax_main, crs=gdf.crs, source=ctx.providers.Esri.WorldImagery)
+        ax_main.set_axis_off()
 
-gdf_terminal = gpd.GeoDataFrame({"label":["Terminal"]}, geometry=[line_terminal], crs="EPSG:4326").to_crs(3857)
-gdf_area = gpd.GeoDataFrame({"label":["Area Lain"]}, geometry=[poly_area], crs="EPSG:4326").to_crs(3857)
+        # Grid + scalebar
+        add_grid(ax_main)
+        add_scalebar(ax_main)
 
-# === Render Peta Final ===
-fig = plt.figure(figsize=(11.7, 8.3))  # A4 Landscape
-gs = fig.add_gridspec(1, 2, width_ratios=[3,1])
+        # === Judul Utama ===
+        fig.text(0.5, 0.93,
+                 "REKOMENDASI PERSUTUJUAN\nKESESUAIAN KEGIATAN PEMANFAATAN RUANG LAUT",
+                 ha="center", va="center", fontsize=14, weight="bold")
 
-# Peta utama
-ax = fig.add_subplot(gs[0,0])
-gdf_rekom.plot(ax=ax, color="green", alpha=0.4, edgecolor="black", linewidth=1)
-gdf_terminal.plot(ax=ax, color="black", linewidth=2)
-gdf_area.plot(ax=ax, color="orange", alpha=0.5, edgecolor="black")
+        # === Legenda ===
+        legend_ax = fig.add_axes([0.75, 0.25, 0.2, 0.4])
+        legend_ax.axis("off")
+        legend_items = [
+            mpatches.Patch(color="green", label="Rekomendasi KKPRL"),
+            mpatches.Patch(color="orange", label="Area Pemanfaatan Lain"),
+            mpatches.Patch(color="black", label="Rencana Terminal Khusus"),
+        ]
+        legend_ax.legend(handles=legend_items, loc="upper left", fontsize=8)
 
-ctx.add_basemap(ax, source=ctx.providers.Esri.WorldImagery)
-ax.set_axis_off()
-ax.set_title("LAMPIRAN BERITA ACARA HASIL PENILAIAN TEKNIS\n"
-             "KESESUAIAN KEGIATAN PEMANFAATAN RUANG LAUT", 
-             fontsize=12, fontweight="bold", loc="center", pad=10)
+        # === Inset Peta Indonesia ===
+        world = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))
+        indonesia = world[world["name"] == "Indonesia"].to_crs(epsg=3857)
+        inset_ax = fig.add_axes([0.75, 0.7, 0.2, 0.2])
+        indonesia.plot(ax=inset_ax, color="lightgrey")
+        gdf.plot(ax=inset_ax, color="red", markersize=5)
+        inset_ax.set_axis_off()
 
-# Panel kanan
-ax_leg = fig.add_subplot(gs[0,1])
-ax_leg.axis("off")
+        # === Logo Instansi ===
+        try:
+            logo = Image.open("logo.png")  # logo instansi di folder sama
+            fig.figimage(logo, xo=60, yo=650, alpha=1, zorder=10)
+        except:
+            pass
 
-ax_leg.text(0.5, 0.95, "KEMENTERIAN KELAUTAN DAN PERIKANAN\nREPUBLIK INDONESIA", 
-            fontsize=10, ha="center", va="top", fontweight="bold")
+        # === Footer Info ===
+        fig.text(0.05, 0.05,
+                 "Sumber Data: Kementerian Kelautan dan Perikanan\nSistem Informasi KKPRL",
+                 ha="left", va="bottom", fontsize=7)
 
-ax_leg.text(0.5, 0.85, "PETA REKOMENDASI PERSETUJUAN\n"
-                       "KESESUAIAN KEGIATAN PEMANFAATAN RUANG LAUT (PERSETUJUAN)\n\n"
-                       "TERMINAL KHUSUS PENUNJANG\n"
-                       "PERTAMBANGAN PASIR KUARSA DAN TANAH LIAT\n"
-                       "PT HERO PROGRES INTERNATIONAL\n\n"
-                       "Kabupaten Belitung Timur, Provinsi Kepulauan Bangka Belitung", 
-            fontsize=8, ha="center", va="top")
+        # === Bingkai Hitam (border) ===
+        border = mpatches.Rectangle((0, 0), 1, 1,
+                                    transform=fig.transFigure,
+                                    fill=False, color="black", linewidth=2)
+        fig.patches.append(border)
 
-legend_patches = [
-    mpatches.Patch(color="green", alpha=0.4, label="Rekomendasi KKPRL"),
-    mpatches.Patch(color="orange", alpha=0.5, label="Area Pemanfaatan Lain"),
-    mpatches.Patch(color="black", alpha=1, label="Terminal Khusus")
-]
-ax_leg.legend(handles=legend_patches, loc="upper center", fontsize=7, frameon=False)
+        # Simpan ke PNG
+        buf_png = io.BytesIO()
+        fig.savefig(buf_png, format="png", dpi=300, bbox_inches="tight")
+        buf_png.seek(0)
 
-ax_leg.text(0, 0.25, "SUMBER:\n"
-                     "1. Penilaian Teknis Permohonan KKPRL Tanggal 26 Februari 2025\n"
-                     "2. Perbaikan Dokumen Permohonan KKPRL Tanggal 3 Maret 2025\n"
-                     "3. Peraturan Daerah Provinsi Bangka Belitung Nomor 3 Tahun 2020\n"
-                     "4. Rencana Zonasi Wilayah Pesisir dan Pulau-Pulau Kecil\n"
-                     "   Provinsi Kepulauan Bangka Belitung Tahun 2020-2040", 
-            fontsize=6.5, ha="left")
+        # Konversi ke JPG
+        img = Image.open(buf_png).convert("RGB")
+        buf_jpg = io.BytesIO()
+        img.save(buf_jpg, format="JPEG", quality=95)
+        buf_jpg.seek(0)
 
-ax_leg.text(0, 0.05, "CATATAN:\nPeta ini bukan merupakan acuan/referensi resmi mengenai nama-nama\n"
-                     "dan batas-batas administrasi nasional maupun internasional.", fontsize=6.5)
+        # Tombol download
+        st.download_button(
+            "📥 Download Peta Layout JPG",
+            data=buf_jpg,
+            file_name="peta_rekomendasi.jpg",
+            mime="image/jpeg"
+        )
 
-# Skala grafis
-ax_leg.hlines(y=0.6, xmin=0.1, xmax=0.5, colors="black")
-ax_leg.vlines(x=[0.1,0.3,0.5], ymin=0.59, ymax=0.61, colors="black")
-ax_leg.text(0.1,0.62,"0 km", fontsize=6, ha="center")
-ax_leg.text(0.3,0.62,"1 km", fontsize=6, ha="center")
-ax_leg.text(0.5,0.62,"2 km", fontsize=6, ha="center")
+        plt.close(fig)
+        st.success("✅ Peta layout final dengan bingkai berhasil dibuat.")
 
-plt.tight_layout()
-
-# === Export ke JPG ===
-buf = io.BytesIO()
-fig.savefig(buf, format="jpg", dpi=300, bbox_inches="tight")
-st.download_button("📥 Download Peta (JPG)", data=buf.getvalue(),
-                   file_name="peta_kkprl.jpg", mime="image/jpeg")
+    except Exception as e:
+        st.error(f"Gagal memproses file: {e}")
